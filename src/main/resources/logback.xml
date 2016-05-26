@@ -20,9 +20,11 @@
             <level>debug</level>
         </filter>
         <encoder>
-            <pattern>%date{ISO8601} - %logger -> %-5level[%thread] %logger{0} - %msg%n</pattern>
+            <pattern>[%-5level] [%date{HH:mm:ss.SSS}] - %msg%n</pattern>
         </encoder>
     </appender>
+
+    <logger name="com.github.dnvriend" level="debug"/>
 
     <root level="info">
         <appender-ref ref="console"/>

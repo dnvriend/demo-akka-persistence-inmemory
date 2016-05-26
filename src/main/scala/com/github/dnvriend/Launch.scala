@@ -30,17 +30,15 @@ import scala.concurrent.ExecutionContext
 import scala.language.implicitConversions
 
 object Counter {
+  final val CounterPersistenceId = "COUNTER"
 
   sealed trait Command
-
   final case class Increment(value: Int) extends Command
-
   final case class Decrement(value: Int) extends Command
+  case object Stop extends Command
 
   sealed trait Event
-
   final case class Incremented(value: Int) extends Event
-
   final case class Decremented(value: Int) extends Event
 
   case class CounterState(value: Int = 0) {
@@ -52,60 +50,57 @@ object Counter {
 
 }
 
-class Counter(override val persistenceId: String, id: Int)(implicit ec: ExecutionContext) extends PersistentActor {
-
+class Counter(implicit ec: ExecutionContext) extends PersistentActor {
   import Counter._
-
+  override val persistenceId = Counter.CounterPersistenceId
   private var state = CounterState()
 
-  import scala.concurrent.duration._
+  val incrementer = context.system.scheduler.schedule(0.seconds, 1.second, self, Increment(1))
+  val decrementer = context.system.scheduler.schedule(0.seconds, 5.seconds, self, Decrement(1))
+  context.system.scheduler.scheduleOnce(10.seconds, self, Stop)
 
-  context.system.scheduler.schedule(0.seconds, 1.second, self, Increment(1))
-  context.system.scheduler.schedule(0.seconds, 5.seconds, self, Decrement(1))
-  context.system.scheduler.scheduleOnce(FiniteDuration(id * 10, TimeUnit.SECONDS), self, PoisonPill)
-
-  private def handleEvent(event: Event): Unit = {
+  private def handleEvent(event: Event): Unit =
     state = state.update(event)
-    println("==> Current state: " + state)
-  }
 
-  override def receiveRecover: Receive = {
+  override def receiveRecover: Receive = LoggingReceive {
     case event: Incremented ⇒ handleEvent(event)
     case event: Decremented ⇒ handleEvent(event)
   }
 
-  override def receiveCommand: Receive = {
+  override def receiveCommand: Receive = LoggingReceive {
     case Increment(value) ⇒
-      println(s"==> Incrementing with: $value")
       persist(Incremented(value))(handleEvent)
 
     case Decrement(value) ⇒
-      println(s"==> Decrementing with: $value")
       persist(Decremented(value))(handleEvent)
-  }
 
-  override def aroundPostStop(): Unit = {
-    println("====> Stopped: id" + id)
-    super.aroundPostStop()
+    case Stop ⇒
+      incrementer.cancel()
+      decrementer.cancel()
+      self ! PoisonPill
   }
 }
 
 object CounterReader {
   final case class Offset(x: Long = 0)
+  final case class Print(msg: String)
 }
 class CounterReader(readJournal: InMemoryReadJournal)(implicit ec: ExecutionContext, mat: Materializer) extends Actor {
-  def schedulePoll(from: Long): Unit = {
-    println("Scheduling from: " + from)
-    context.system.scheduler.scheduleOnce(1.second, self, CounterReader.Offset(from))
-  }
+  def schedulePoll(from: Long): Unit = context.system.scheduler.scheduleOnce(1.second, self, CounterReader.Offset(from))
 
   schedulePoll(0)
 
   override def receive: Receive = LoggingReceive {
     case CounterReader.Offset(from) ⇒
-      readJournal.currentEventsByPersistenceId("COUNTER", from, Long.MaxValue)
-        .runForeach(println)
-        .map(_ ⇒ schedulePoll(from + 1))
+      readJournal.currentEventsByPersistenceId(Counter.CounterPersistenceId, from, Long.MaxValue)
+        .map {
+          case env @ EventEnvelope(offset, persistenceId, sequenceNr, event) ⇒
+            self ! CounterReader.Print(env.toString)
+            offset
+        }
+        .runFold(List.empty[Long])(_ :+ _)
+        .map(xs ⇒ schedulePoll(xs.max + 1))
+    case CounterReader.Print(msg) ⇒
   }
 }
 
@@ -113,7 +108,8 @@ object Launch extends App {
   implicit val system: ActorSystem = ActorSystem()
   implicit val ec: ExecutionContext = system.dispatcher
   implicit val mat: Materializer = ActorMaterializer()
+  sys.addShutdownHook(system.terminate())
   lazy val readJournal: InMemoryReadJournal = PersistenceQuery(system).readJournalFor[InMemoryReadJournal](InMemoryReadJournal.Identifier)
-  system.actorOf(Props(new Counter("COUNTER", 1)), "Counter")
+  system.actorOf(Props(new Counter), "Counter")
   system.actorOf(Props(new CounterReader(readJournal)), "CounterReader")
 }
