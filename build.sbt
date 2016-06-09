@@ -25,7 +25,8 @@ scalaVersion := "2.11.8"
 resolvers += Resolver.jcenterRepo
 
 libraryDependencies ++= {
-  val akkaVersion = "2.4.6"
+  val akkaVersion = "2.4.7"
+  val inMemoryVersion = "1.3.0"
   Seq(
     "com.typesafe.akka" %% "akka-actor" % akkaVersion,
     "com.typesafe.akka" %% "akka-slf4j" % akkaVersion,
@@ -34,12 +35,14 @@ libraryDependencies ++= {
     "com.typesafe.akka" %% "akka-persistence-query-experimental" % akkaVersion,
     "com.typesafe.akka" %% "akka-cluster" % akkaVersion,
     "com.typesafe.akka" %% "akka-cluster-sharding" % akkaVersion,
-    "com.github.dnvriend" %% "akka-persistence-inmemory" % "1.2.14",
-    "ch.qos.logback" % "logback-classic" % "1.1.2",
+    "com.github.dnvriend" %% "akka-persistence-inmemory" % inMemoryVersion,
+    "ch.qos.logback" % "logback-classic" % "1.1.7",
     "com.typesafe.akka" %% "akka-stream-testkit" % akkaVersion % Test,
     "org.scalatest" %% "scalatest" % "2.2.6" % Test
   )
 }
+
+scalacOptions ++= Seq("-feature", "-language:higherKinds", "-language:implicitConversions", "-deprecation", "-Ybackend:GenBCode", "-Ydelambdafy:method", "-target:jvm-1.8", "-Xexperimental")
 
 fork in Test := true
 
@@ -49,15 +52,14 @@ licenses +=("Apache-2.0", url("http://opensource.org/licenses/apache2.0.php"))
 
 // enable scala code formatting //
 import scalariform.formatter.preferences._
+import com.typesafe.sbt.SbtScalariform
 
-scalariformSettings
-
-ScalariformKeys.preferences := ScalariformKeys.preferences.value
+// Scalariform settings
+SbtScalariform.autoImport.scalariformPreferences := SbtScalariform.autoImport.scalariformPreferences.value
   .setPreference(AlignSingleLineCaseStatements, true)
   .setPreference(AlignSingleLineCaseStatements.MaxArrowIndent, 100)
   .setPreference(DoubleIndentClassDeclaration, true)
   .setPreference(RewriteArrowSymbols, true)
-
 // enable updating file headers //
 import de.heikoseeberger.sbtheader.license.Apache2_0
 

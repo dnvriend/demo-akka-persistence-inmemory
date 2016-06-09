@@ -16,17 +16,16 @@
 
 package com.github.dnvriend
 
-import java.util.concurrent.TimeUnit
-
-import akka.actor.{ Actor, ActorSystem, PoisonPill, Props }
-import akka.event.LoggingReceive
+import akka.actor.{ ActorSystem, PoisonPill, Props }
+import akka.event.{ Logging, LoggingAdapter, LoggingReceive }
 import akka.persistence.PersistentActor
 import akka.persistence.inmemory.query.journal.scaladsl.InMemoryReadJournal
 import akka.persistence.query.{ EventEnvelope, PersistenceQuery }
 import akka.stream.{ ActorMaterializer, Materializer }
+import com.github.dnvriend.Counter.{ Decremented, Incremented }
 
-import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 object Counter {
@@ -47,7 +46,6 @@ object Counter {
       case Decremented(decrementBy) ⇒ copy(value - decrementBy)
     }
   }
-
 }
 
 class Counter(implicit ec: ExecutionContext) extends PersistentActor {
@@ -81,35 +79,18 @@ class Counter(implicit ec: ExecutionContext) extends PersistentActor {
   }
 }
 
-object CounterReader {
-  final case class Offset(x: Long = 0)
-  final case class Print(msg: String)
-}
-class CounterReader(readJournal: InMemoryReadJournal)(implicit ec: ExecutionContext, mat: Materializer) extends Actor {
-  def schedulePoll(from: Long): Unit = context.system.scheduler.scheduleOnce(1.second, self, CounterReader.Offset(from))
-
-  schedulePoll(0)
-
-  override def receive: Receive = LoggingReceive {
-    case CounterReader.Offset(from) ⇒
-      readJournal.currentEventsByPersistenceId(Counter.CounterPersistenceId, from, Long.MaxValue)
-        .map {
-          case env @ EventEnvelope(offset, persistenceId, sequenceNr, event) ⇒
-            self ! CounterReader.Print(env.toString)
-            offset
-        }
-        .runFold(List.empty[Long])(_ :+ _)
-        .map(xs ⇒ schedulePoll(xs.max + 1))
-    case CounterReader.Print(msg) ⇒
-  }
-}
-
 object Launch extends App {
   implicit val system: ActorSystem = ActorSystem()
   implicit val ec: ExecutionContext = system.dispatcher
   implicit val mat: Materializer = ActorMaterializer()
+  val log: LoggingAdapter = Logging(system, this.getClass)
   sys.addShutdownHook(system.terminate())
   lazy val readJournal: InMemoryReadJournal = PersistenceQuery(system).readJournalFor[InMemoryReadJournal](InMemoryReadJournal.Identifier)
-  system.actorOf(Props(new Counter), "Counter")
-  system.actorOf(Props(new CounterReader(readJournal)), "CounterReader")
+
+  system.actorOf(Props(new Counter))
+
+  readJournal.eventsByPersistenceId(Counter.CounterPersistenceId, 1, Long.MaxValue).map {
+    case EventEnvelope(offset, persistenceId, sequenceNr, Incremented(value)) ⇒ log.debug("Query received: Incremented {}", value)
+    case EventEnvelope(offset, persistenceId, sequenceNr, Decremented(value)) ⇒ log.debug("Query received Decremented: {}", value)
+  }.runForeach(_ ⇒ ())
 }
